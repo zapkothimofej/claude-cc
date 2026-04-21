@@ -13,7 +13,7 @@
  *   node claude-companion.mjs cancel [job-id]
  */
 
-import { spawn, execSync } from "node:child_process";
+import { spawn, execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -125,22 +125,19 @@ function runClaude(claudePath, prompt, opts = {}) {
   const {
     model = "claude-opus-4-7",
     allowedTools = "Read,Glob,Grep,Bash",
-    permissionMode = "bypassPermissions",
     background = false,
     outputFile = null,
   } = opts;
 
   const args = [
-    "-p", prompt,
+    "--print", prompt,
     "--model", model,
     "--allowedTools", allowedTools,
-    "--permission-mode", permissionMode,
+    "--dangerously-skip-permissions",
     "--output-format", "text",
-    "--no-stream",
   ];
 
   if (outputFile) {
-    // background: write to file
     const child = spawn(claudePath, args, {
       detached: true,
       stdio: ["ignore", fs.openSync(outputFile, "w"), fs.openSync(outputFile + ".err", "w")],
@@ -149,14 +146,15 @@ function runClaude(claudePath, prompt, opts = {}) {
     child.unref();
     return { pid: child.pid };
   } else {
-    // foreground: stream to stdout
-    const result = execSync(`"${claudePath}" ${args.map(a => JSON.stringify(a)).join(" ")}`, {
+    const result = spawnSync(claudePath, args, {
       encoding: "utf8",
       cwd: WORKSPACE_ROOT,
       maxBuffer: 50 * 1024 * 1024,
       timeout: 300000,
     });
-    return { output: result };
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error(result.stderr || `exit ${result.status}`);
+    return { output: result.stdout };
   }
 }
 
@@ -250,7 +248,7 @@ Instructions:
       outputFile,
       pid: null,
     };
-    const { pid } = runClaude(claudePath, prompt, { model: modelArg, allowedTools: "Read,Glob,Grep", background: true, outputFile });
+    const { pid } = runClaude(claudePath, prompt, { model: modelArg, allowedTools: "Read,Glob,Grep,Bash", background: true, outputFile });
     job.pid = pid;
     saveJob(job);
     console.log(`Claude ${reviewType} started in background.`);
@@ -261,7 +259,7 @@ Instructions:
     const job = { id: jobId, kind: adversarial ? "adversarial-review" : "review", status: "running", startedAt: nowIso(), outputFile };
     saveJob(job);
     try {
-      const { output } = runClaude(claudePath, prompt, { model: modelArg, allowedTools: "Read,Glob,Grep" });
+      const { output } = runClaude(claudePath, prompt, { model: modelArg, allowedTools: "Read,Glob,Grep,Bash" });
       fs.writeFileSync(outputFile, output);
       job.status = "done";
       job.finishedAt = nowIso();
@@ -308,7 +306,6 @@ function cmdTask(rawArgs) {
     const { pid } = runClaude(claudePath, prompt, {
       model,
       allowedTools: "all",
-      permissionMode: "bypassPermissions",
       background: true,
       outputFile,
     });
@@ -325,7 +322,6 @@ function cmdTask(rawArgs) {
       const { output } = runClaude(claudePath, prompt, {
         model,
         allowedTools: "all",
-        permissionMode: "bypassPermissions",
       });
       fs.writeFileSync(outputFile, output);
       job.status = "done";
