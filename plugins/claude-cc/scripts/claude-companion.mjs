@@ -78,24 +78,40 @@ function findClaude() {
 
 function getClaudeVersion(claudePath) {
   try {
-    return execSync(`"${claudePath}" --version`, { encoding: "utf8", stdio: ["pipe","pipe","pipe"] }).trim();
+    const result = spawnSync(claudePath, ["--version"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.error || result.status !== 0 || result.signal) return null;
+    return result.stdout.trim();
   } catch {
     return null;
   }
 }
 
 // ── Git helpers ────────────────────────────────────────────────────────────────
+function runGit(args) {
+  const result = spawnSync("git", args, {
+    encoding: "utf8",
+    cwd: WORKSPACE_ROOT,
+  });
+  if (result.error) throw result.error;
+  if (result.signal) throw new Error(`git terminated by signal ${result.signal}`);
+  if (result.status !== 0) throw new Error(result.stderr || `git exited with status ${result.status}`);
+  return result.stdout.trim();
+}
+
 function getGitDiff(base, scope) {
   try {
-    if (base) return execSync(`git diff ${base}...HEAD`, { encoding: "utf8", cwd: WORKSPACE_ROOT }).trim();
-    if (scope === "staged") return execSync("git diff --cached", { encoding: "utf8", cwd: WORKSPACE_ROOT }).trim();
+    if (base) return runGit(["diff", `${base}...HEAD`]);
+    if (scope === "staged") return runGit(["diff", "--cached"]);
     if (scope === "branch") {
       const main = tryGetMainBranch();
-      return execSync(`git diff ${main}...HEAD`, { encoding: "utf8", cwd: WORKSPACE_ROOT }).trim();
+      return runGit(["diff", `${main}...HEAD`]);
     }
     // auto / working-tree
-    const staged = execSync("git diff --cached", { encoding: "utf8", cwd: WORKSPACE_ROOT }).trim();
-    const unstaged = execSync("git diff", { encoding: "utf8", cwd: WORKSPACE_ROOT }).trim();
+    const staged = runGit(["diff", "--cached"]);
+    const unstaged = runGit(["diff"]);
     return [staged, unstaged].filter(Boolean).join("\n\n");
   } catch {
     return "";
@@ -152,7 +168,16 @@ function runClaude(claudePath, prompt, opts = {}) {
       maxBuffer: 50 * 1024 * 1024,
       timeout: 300000,
     });
+    if (result.error?.code === "ENOBUFS") {
+      throw new Error("Claude output exceeded the 50 MiB buffer limit. Reduce the scope or use --background.");
+    }
+    if (result.error?.code === "ETIMEDOUT") {
+      throw new Error(`Claude timed out after 300s and was terminated with signal ${result.signal || "SIGTERM"}.`);
+    }
     if (result.error) throw result.error;
+    if (result.signal) {
+      throw new Error(result.stderr || `Claude terminated by signal ${result.signal}`);
+    }
     if (result.status !== 0) throw new Error(result.stderr || `exit ${result.status}`);
     return { output: result.stdout };
   }
