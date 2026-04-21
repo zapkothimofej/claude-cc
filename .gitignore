@@ -1,0 +1,5 @@
+node_modules/
+.claude-cc/
+*.output
+*.err
+.DS_Store

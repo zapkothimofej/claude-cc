@@ -1,0 +1,8 @@
+interface:
+  display_name: "Claude CC"
+  short_description: "Claude Code inside Codex — review, adversarial review, rescue"
+  brand_color: "#CC785C"
+  default_prompt: "Run a Claude review"
+
+policy:
+  allow_implicit_invocation: false
